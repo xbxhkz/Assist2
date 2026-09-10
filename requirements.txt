@@ -39,7 +39,13 @@ python-dateutil
 caldav
 cryptography
 bcrypt
-mcp
+# Pinned below 2.0 deliberately. A bare `mcp` resolved to 2.0.0 on a fresh
+# install and killed all four built-in MCP servers -- the app still started, so
+# the failure showed up as "my MCP tools vanished" rather than anything
+# diagnosable. 1.x is what is actually tested here (1.28.1 at the time of
+# writing); `<2` keeps 1.x updates flowing while blocking the breaking major.
+# Revisit by porting to the 2.x API, not by loosening this line.
+mcp<2
 pyotp
 qrcode[pil]
 croniter
