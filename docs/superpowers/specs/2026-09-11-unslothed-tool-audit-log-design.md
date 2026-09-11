@@ -174,9 +174,26 @@ One row per invocation, in the existing Studio SQLite database.
 | `result_head`, `result_tail`, `result_bytes` | first 4 KB and last 4 KB of the result (8 KB stored per row at most); `result_bytes` is the TRUE length, so truncation is always detectable |
 | `result_sha256` | prove two runs produced identical output |
 | `error_text` | kept **whole** — a truncated traceback is useless |
-| `approval_id`, `approved`, `permission_mode` | ties the call to the existing approval handshake and the mode in force at the time |
+| `disable_sandbox` | whether the call ran with Bypass Permissions — no sandbox, no blocklist, no rlimits. A real parameter of `execute_tool`, and the single most security-relevant fact about an invocation |
 
 Indexed on `ts`, `tool_name`, `session_id`.
+
+### Dropped from v1: approval_id, approved, permission_mode
+
+An earlier draft recorded these. They are **not reachable from `execute_tool`** — they live in the
+tool loop, and `permission_mode` appears nowhere in `state/` or `storage/`; `state/tool_policy.py`
+carries only a tools-enabled boolean, not the mode.
+
+Plumbing them would mean a ContextVar set by each caller before dispatch. One of the three callers
+is `core/inference/llama_cpp.py`, which this fork does not edit — so approval context would be
+present on two paths and absent on the third, and a stored `approved = null` would ambiguously mean
+"the user denied it" or "this path cannot tell you". For a forensic record that ambiguity is worse
+than an honest absence, so the columns are out until the governance sub-project gives the tool loop
+a reason to publish that state properly.
+
+`disable_sandbox` replaces them and is arguably the better field: it is a genuine parameter of
+`execute_tool`, available on every path, and it records whether the call ran with the sandbox,
+command blocklist and resource limits switched off.
 
 **The hash covers the redacted payload, not the original.** Hashing the original would let a short
 secret be confirmed by brute force against the stored digest. Hashing post-redaction keeps
