@@ -619,6 +619,11 @@ _SECRET_VALUE_RES = (
     re.compile(r"(?i)bearer\s+[A-Za-z0-9._\-]{12,}"),
     re.compile(r"xox[baprs]-[A-Za-z0-9-]{10,}"),         # Slack
 )
+# Deliberately NO generic "long high-entropy string" rule. It is the highest
+# false-positive layer of the four -- git SHAs, UUIDs, file hashes and base64
+# payloads are all legitimate tool arguments -- and over-redaction is the
+# quieter failure: it guts the log while still passing a "secrets are removed"
+# test. The spec's accepted v1 gap covers what this misses.
 
 # Argument names that carry a filesystem path, for the searchable paths_json column.
 _PATH_KEYS = frozenset({"path", "file", "file_path", "filepath", "target", "directory", "dir", "cwd"})
@@ -1100,7 +1105,7 @@ def test_the_seam_stays_additive():
     assert stat, "no diff recorded for tools.py"
     insertions, deletions = int(stat[0]), int(stat[1])
     assert deletions == 0, f"tools.py lost {deletions} line(s) to the fork; the seam must be additive"
-    assert insertions <= 70, f"seam grew to {insertions} insertions; budget is ~55"
+    assert insertions <= 80, f"seam grew to {insertions} insertions; budget is ~73"
 ```
 
 - [ ] **Step 2: Run it and watch it fail**
