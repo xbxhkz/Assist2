@@ -89,19 +89,63 @@ for a security-relevant record.
 All new code is fork-owned. `tools.py` gains only the call.
 
 ```
-core/inference/tool_audit/__init__.py    record_start(), record_end() — the entry points
+core/inference/tool_audit/__init__.py    around(fn, *args, **kwargs) — the single entry point
 core/inference/tool_audit/redaction.py   secret scrubbing
 storage/tool_audit_db.py                 table, writes, queries, pruning
 routes/tool_audit.py                     read-only API
 studio/frontend/...                      activity panel
 ```
 
+`main.py` gains two lines — an import and an `include_router` — exactly mirroring what the
+draft-model sub-project already added there. That file is additive-only for this fork, not
+untouchable: it currently stands at 2 insertions / 0 deletions against upstream, and this takes it
+to 4.
+
 ### The seam
 
-A `try/finally` around the existing dispatch inside `execute_tool`. Estimated ~15 insertions,
-**zero deletions**, taking the fork's `tools.py` footprint from 47 to roughly 62 insertions. The
-additive-only rule holds: a purely additive hunk survives an upstream rewrite of neighbouring lines,
-where a modified line conflicts the moment upstream touches it.
+An earlier draft of this spec said "a `try/finally` around the existing dispatch inside
+`execute_tool`". **That is not achievable additively**, and the correction matters enough to record.
+`execute_tool` spans `tools.py:10031-10189` — roughly 160 lines of if/elif dispatch with many
+`return` statements. Wrapping that body in `try:` means re-indenting ~145 lines, so every one of
+them shows as modified. It would be the single largest conflict surface the fork owns, in the most
+contended upstream file.
+
+The additive form is a **definition-time shadow**, appended immediately after the function ends
+(line 10189, before `_opt_int` at 10192):
+
+```python
+# --- fork: tool audit -------------------------------------------------------
+_execute_tool_unaudited = execute_tool
+
+
+@functools.wraps(_execute_tool_unaudited)
+def execute_tool(*args, **kwargs):  # noqa: F811 - deliberate shadow, see above
+    from core.inference import tool_audit
+
+    return tool_audit.around(_execute_tool_unaudited, *args, **kwargs)
+```
+
+~8 insertions, **zero deletions, zero re-indentation**. `functools` is already imported at
+`tools.py:10`.
+
+**Why this is not the monkeypatch rejected above.** The rejected approach patched
+`tools.execute_tool` from *another* module after import, so whether a caller got the wrapper
+depended on import order — and all three callers bind the function object via
+`from core.inference.tools import execute_tool`, so a late patch misses them. This shadow runs
+inside `tools.py`'s own module body, before that module finishes executing and therefore before any
+importer can bind anything. Deterministic, not order-dependent.
+
+**Why `accepts_kwarg` keeps working.** `studio_tool_loop.py:1230-1244` calls
+`accepts_kwarg(execute_tool, "conversation_branch")` and friends before forwarding those kwargs, and
+`accepts_kwarg` (`core/inference/tool_stream_exec.py:35`) uses `inspect.signature(func)`.
+`inspect.signature` follows `__wrapped__`, which `functools.wraps` sets, so it reports the ORIGINAL
+parameters rather than `(*args, **kwargs)`. Verified empirically before adopting this approach — a
+bare wrapper without `functools.wraps` would have silently disabled conversation-branch and budget
+forwarding, which no existing test covers.
+
+The additive-only rule is what makes this worth the care: a purely additive hunk survives an
+upstream rewrite of neighbouring lines, where a modified line conflicts the moment upstream touches
+it. `tools.py` goes from 47 to ~55 insertions, still zero deletions.
 
 ### Two-phase write
 
