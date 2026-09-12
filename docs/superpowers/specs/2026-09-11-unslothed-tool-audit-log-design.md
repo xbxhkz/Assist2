@@ -135,13 +135,28 @@ depended on import order — and all three callers bind the function object via
 inside `tools.py`'s own module body, before that module finishes executing and therefore before any
 importer can bind anything. Deterministic, not order-dependent.
 
-**Why `accepts_kwarg` keeps working.** `studio_tool_loop.py:1230-1244` calls
-`accepts_kwarg(execute_tool, "conversation_branch")` and friends before forwarding those kwargs, and
-`accepts_kwarg` (`core/inference/tool_stream_exec.py:35`) uses `inspect.signature(func)`.
-`inspect.signature` follows `__wrapped__`, which `functools.wraps` sets, so it reports the ORIGINAL
-parameters rather than `(*args, **kwargs)`. Verified empirically before adopting this approach — a
-bare wrapper without `functools.wraps` would have silently disabled conversation-branch and budget
-forwarding, which no existing test covers.
+**Why `functools.wraps` is there — corrected after implementation.** An earlier revision of this
+spec claimed the decorator was required for kwarg forwarding: that `studio_tool_loop.py:1230-1244`
+gates forwarding on `accepts_kwarg(execute_tool, ...)`, which uses `inspect.signature`, so a bare
+wrapper reporting `(*args, **kwargs)` would silently disable conversation-branch and budget
+forwarding.
+
+**That is false.** `accepts_kwarg` (`core/inference/tool_stream_exec.py:35`) returns True when the
+callable declares the keyword **or takes `**kwargs`** — and a bare wrapper takes `**kwargs`. So
+forwarding works with or without the decorator. The implementer discovered this by actually removing
+`@functools.wraps` and observing that the test written to catch it still passed; it was verified
+independently afterwards.
+
+The consequence worth recording: the test that spec revision specified,
+`test_accepts_kwarg_still_sees_the_forwarded_kwargs`, is an **inert control** — green with or
+without the fix it claims to guard. It is the ninth inert control this project has produced and the
+first written by the controller rather than found in inherited code. It is kept as corroboration and
+relabelled; the live control is `test_the_wrapper_preserves_the_original_signature`, which does fail
+when the decorator is removed.
+
+`functools.wraps` stays, for the reasons that are actually true: the wrapper reports `execute_tool`'s
+real name, docstring and signature to `inspect`, tracebacks and API documentation, instead of
+`(*args, **kwargs)`.
 
 The additive-only rule is what makes this worth the care: a purely additive hunk survives an
 upstream rewrite of neighbouring lines, where a modified line conflicts the moment upstream touches
